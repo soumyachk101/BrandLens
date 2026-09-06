@@ -1,0 +1,357 @@
+generator client {
+ provider = "prisma-client-js"
+ output = "../../node_modules/.prisma/client"
+}
+
+datasource db {
+ provider = "postgresql"
+ url = env("DATABASE_URL")
+}
+
+enum PlanType {
+ starter
+ growth
+ enterprise
+}
+
+enum ScanFrequency {
+ hourly
+ daily
+ weekly
+ manual
+}
+
+enum QueryPlatform {
+ chatgpt
+ perplexity
+ claude
+ gemini
+ copilot
+ deepseek
+ groq
+ custom
+}
+
+enum QueryStatus {
+ pending
+ running
+ completed
+ failed
+ timeout
+}
+
+enum QueryVariant {
+ original
+ paraphrased
+ question_form
+}
+
+enum EntityType {
+ brand
+ competitor
+ product
+ keyword
+}
+
+enum SentimentType {
+ positive
+ neutral
+ negative
+ mixed
+}
+
+enum ReportType {
+ weekly
+ monthly
+ quarterly
+ custom
+ competitor
+ sentiment
+}
+
+enum ReportStatus {
+ generating
+ completed
+ failed
+ sent
+}
+
+enum SubscriptionStatus {
+ active
+ trialing
+ past_due
+ canceled
+ unpaid
+ incomplete
+}
+
+enum DeliveryStatus {
+ pending
+ sent
+ failed
+ retrying
+}
+
+enum TriggeredBy {
+ scheduled
+ manual
+ webhook
+ api
+}
+
+model agencies {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ name String @db.VarChar(255)
+ email String @unique @db.VarChar(255)
+ password_hash String @db.VarChar(255)
+ plan PlanType @default(starter)
+ white_label_config Json @default("{}") @db.JsonB
+ api_key String? @unique @db.VarChar(255)
+ email_verified Boolean @default(false)
+ last_login_at DateTime? @db.Timestamptz
+ created_at DateTime @default(now()) @db.Timestamptz
+ updated_at DateTime @default(now()) @db.Timestamptz
+
+ brands brands[]
+ subscriptions subscriptions[]
+ reports reports[]
+ competitors competitors[]
+ scan_jobs scan_jobs[]
+ webhook_events webhook_events[]
+ prompt_templates prompt_templates[]
+
+ @@map("agencies")
+ @@index([email])
+ @@index([api_key])
+ @@index([plan])
+ @@index([created_at])
+}
+
+model brands {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ agency_id String @db.Uuid
+ name String @db.VarChar(255)
+ industry String? @db.VarChar(100)
+ description String?
+ website_url String? @db.VarChar(500)
+ logo_url String? @db.VarChar(500)
+ keywords Json @default("[]") @db.JsonB
+ competitors Json @default("[]") @db.JsonB
+ scan_frequency ScanFrequency @default(daily)
+ is_active Boolean @default(true)
+ last_scanned_at DateTime? @db.Timestamptz
+ created_at DateTime @default(now()) @db.Timestamptz
+ updated_at DateTime @default(now()) @db.Timestamptz
+
+ agency agencies @relation(fields: [agency_id], references: [id], onDelete: Cascade)
+ ai_queries ai_queries[]
+ mentions mentions[]
+ competitors competitors[]
+ reports reports[]
+ scan_jobs scan_jobs[]
+ prompt_templates prompt_templates[]
+
+ @@map("brands")
+ @@index([agency_id])
+ @@index([agency_id, name])
+ @@index([is_active])
+ @@index([last_scanned_at])
+ @@index([industry])
+ @@index([keywords], type: Gin)
+}
+
+model ai_queries {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ brand_id String @db.Uuid
+ platform QueryPlatform
+ query_text String
+ query_variant QueryVariant @default(original)
+ prompt_template_id String? @db.Uuid
+ ai_response Json @db.JsonB
+ mentions Json @default("[]") @db.JsonB
+ mention_count Int @default(0)
+ sentiment_score Decimal? @db.Decimal(4, 3)
+ confidence_score Decimal? @db.Decimal(4, 3)
+ status QueryStatus @default(completed)
+ error_message String?
+ response_time_ms Int?
+ created_at DateTime @default(now()) @db.Timestamptz
+
+ brand brands @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+ mentions_ref mentions[]
+
+ @@map("ai_queries")
+ @@index([brand_id])
+ @@index([platform])
+ @@index([created_at])
+ @@index([brand_id, platform, created_at])
+ @@index([status])
+ @@index([mentions], type: Gin)
+}
+
+model mentions {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ brand_id String @db.Uuid
+ query_id String @db.Uuid
+ platform String @db.VarChar(50)
+ entity_name String @db.VarChar(255)
+ entity_type EntityType
+ context String
+ sentiment SentimentType @default(neutral)
+ sentiment_score Decimal? @db.Decimal(4, 3)
+ confidence_score Decimal? @db.Decimal(4, 3)
+ position Int?
+ citation_urls Json @default("[]") @db.JsonB
+ created_at DateTime @default(now()) @db.Timestamptz
+
+ brand brands @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+ ai_query ai_queries @relation(fields: [query_id], references: [id], onDelete: Cascade)
+
+ @@map("mentions")
+ @@index([brand_id])
+ @@index([query_id])
+ @@index([platform])
+ @@index([entity_type])
+ @@index([sentiment])
+ @@index([created_at])
+ @@index([brand_id, platform, created_at])
+ @@index([entity_name])
+ @@index([context(ops: Raw("gin_trgm_ops"))], type: Gin)
+}
+
+model competitors {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ brand_id String @db.Uuid
+ competitor_name String @db.VarChar(255)
+ mention_count Int @default(0)
+ visibility_score Decimal @default(0) @db.Decimal(5, 4)
+ avg_sentiment_score Decimal? @db.Decimal(4, 3)
+ last_mentioned_at DateTime? @db.Timestamptz
+ created_at DateTime @default(now()) @db.Timestamptz
+ updated_at DateTime @default(now()) @db.Timestamptz
+
+ brand brands @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+
+ @@map("competitors")
+ @@index([brand_id])
+ @@index([visibility_score(sort: Desc)])
+ @@unique([brand_id, competitor_name])
+}
+
+model reports {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ brand_id String @db.Uuid
+ report_type ReportType
+ period_start DateTime @db.Date
+ period_end DateTime @db.Date
+ data Json @default("{}") @db.JsonB
+ pdf_url String? @db.VarChar(500)
+ html_url String? @db.VarChar(500)
+ status ReportStatus @default(generating)
+ sent_at DateTime? @db.Timestamptz
+ sent_to Json @default("[]") @db.JsonB
+ created_at DateTime @default(now()) @db.Timestamptz
+ updated_at DateTime @default(now()) @db.Timestamptz
+
+ brand brands @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+
+ @@map("reports")
+ @@index([brand_id])
+ @@index([report_type])
+ @@index([period_start, period_end])
+ @@index([status])
+ @@index([created_at])
+}
+
+model subscriptions {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ agency_id String @db.Uuid
+ stripe_customer_id String? @db.VarChar(255)
+ stripe_subscription_id String? @unique @db.VarChar(255)
+ plan PlanType
+ status SubscriptionStatus @default(active)
+ current_period_start DateTime @db.Timestamptz
+ current_period_end DateTime @db.Timestamptz
+ cancel_at_period_end Boolean @default(false)
+ trial_ends_at DateTime? @db.Timestamptz
+ metadata Json @default("{}") @db.JsonB
+ created_at DateTime @default(now()) @db.Timestamptz
+ updated_at DateTime @default(now()) @db.Timestamptz
+
+ agency agencies @relation(fields: [agency_id], references: [id], onDelete: Cascade)
+
+ @@map("subscriptions")
+ @@index([agency_id])
+ @@index([stripe_subscription_id])
+ @@index([status])
+ @@index([current_period_end])
+}
+
+model prompt_templates {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ brand_id String? @db.Uuid
+ agency_id String? @db.Uuid
+ name String @db.VarChar(255)
+ description String?
+ template String
+ variables Json @default("[]") @db.JsonB
+ platform String @default("chatgpt") @db.VarChar(50)
+ is_default Boolean @default(false)
+ is_active Boolean @default(true)
+ created_at DateTime @default(now()) @db.Timestamptz
+ updated_at DateTime @default(now()) @db.Timestamptz
+
+ brand brands? @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+ agency agencies? @relation(fields: [agency_id], references: [id], onDelete: Cascade)
+
+ @@map("prompt_templates")
+ @@index([brand_id])
+ @@index([agency_id])
+ @@index([is_active])
+}
+
+model scan_jobs {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ brand_id String? @db.Uuid
+ agency_id String @db.Uuid
+ platform String @db.VarChar(50)
+ status String @default("queued") @db.VarChar(20)
+ queries_total Int @default(0)
+ queries_done Int @default(0)
+ queries_failed Int @default(0)
+ error_message String?
+ triggered_by TriggeredBy @default(scheduled)
+ started_at DateTime? @db.Timestamptz
+ completed_at DateTime? @db.Timestamptz
+ created_at DateTime @default(now()) @db.Timestamptz
+
+ brand brands? @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+ agency agencies @relation(fields: [agency_id], references: [id], onDelete: Cascade)
+
+ @@map("scan_jobs")
+ @@index([brand_id])
+ @@index([agency_id])
+ @@index([status])
+ @@index([created_at])
+}
+
+model webhook_events {
+ id String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+ agency_id String @db.Uuid
+ event_type String @db.VarChar(100)
+ payload Json @db.JsonB
+ delivery_status DeliveryStatus @default(pending)
+ response_code Int?
+ response_body String?
+ retry_count Int @default(0)
+ next_retry_at DateTime? @db.Timestamptz
+ created_at DateTime @default(now()) @db.Timestamptz
+ sent_at DateTime? @db.Timestamptz
+
+ agency agencies @relation(fields: [agency_id], references: [id], onDelete: Cascade)
+
+ @@map("webhook_events")
+ @@index([agency_id])
+ @@index([delivery_status])
+ @@index([next_retry_at])
+}

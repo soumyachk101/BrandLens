@@ -1,0 +1,16 @@
+{
+ "name": "backend",
+ "version": "1.0.0",
+ "private": true,
+ "scripts": {
+ "dev": "tsc --watch",
+ "build": "tsc",
+ "lint": "eslint src/ --ext .ts"
+ },
+ "dependencies": {
+ "shared": "*"
+ },
+ "devDependencies": {
+ "typescript": "^5.3.0"
+ }
+}

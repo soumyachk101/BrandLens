@@ -1,0 +1,44 @@
+{
+ "name": "brandlens",
+ "version": "1.0.0",
+ "private": true,
+ "description": "BrandLens – AI-powered brand identity generator",
+ "workspaces": [
+  "frontend",
+  "backend",
+  "shared"
+ ],
+ "scripts": {
+  "dev": "npm run dev --workspaces",
+  "dev:frontend": "npm run dev --workspace=frontend",
+  "dev:backend": "npm run dev --workspace=backend",
+  "build": "npm run build --workspaces",
+  "lint": "npm run lint --workspaces"
+ },
+ "engines": {
+  "node": ">=18.0.0"
+ },
+ "dependencies": {
+  "@hookform/resolvers": "^5.9.1",
+  "@tanstack/react-query": "^5.102.8",
+  "@types/node": "^26.4.1",
+  "@types/react": "^19.2.18",
+  "@types/react-dom": "^19.2.7",
+  "autoprefixer": "^10.5.5",
+  "class-variance-authority": "^0.7.1",
+  "clsx": "^2.1.1",
+  "date-fns": "^4.4.0",
+  "lucide-react": "^1.41.0",
+  "next": "^16.3.4",
+  "postcss": "^8.5.28",
+  "react": "^19.2.8",
+  "react-dom": "^19.2.8",
+  "react-hook-form": "^7.87.0",
+  "recharts": "^3.10.1",
+  "tailwind-merge": "^3.6.0",
+  "tailwindcss": "^4.3.3",
+  "typescript": "^7.0.2",
+  "zod": "^4.5.4",
+  "zustand": "^5.0.15"
+ }
+}

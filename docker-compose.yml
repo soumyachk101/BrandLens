@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+ postgres:
+ image: postgres:15-alpine
+ container_name: brandlens-postgres
+ environment:
+ POSTGRES_DB: brandlens
+ POSTGRES_USER: brandlens
+ POSTGRES_PASSWORD: devpass
+ ports:
+ - "5432:5432"
+ volumes:
+ - pgdata:/var/lib/postgresql/data
+ - ./supabase/migrations:/docker-entrypoint-initdb.d
+ healthcheck:
+ test: ["CMD-SHELL", "pg_isready -U brandlens"]
+ interval: 5s
+ timeout: 5s
+ retries: 5
+
+ redis:
+ image: redis:7-alpine
+ container_name: brandlens-redis
+ ports:
+ - "6379:6379"
+ volumes:
+ - redisdata:/data
+ command: redis-server --appendonly yes
+ healthcheck:
+ test: ["CMD", "redis-cli", "ping"]
+ interval: 5s
+ timeout: 5s
+ retries: 5
+
+ api:
+ build:
+ context: ./backend
+ dockerfile: Dockerfile
+ container_name: brandlens-api
+ ports:
+ - "3000:3000"
+ environment:
+ PORT: 3000
+ NODE_ENV: development
+ SUPABASE_URL: http://host.docker.internal:54321
+ SUPABASE_ANON_KEY: your-anon-key
+ SUPABASE_SERVICE_ROLE_KEY: your-service-role-key
+ REDIS_URL: redis://redis:6379
+ JWT_SECRET: your-jwt-secret-key-here-make-it-long-and-random
+ CORS_ORIGIN: http://localhost:3001,http://localhost:3002
+ depends_on:
+ postgres:
+ condition: service_healthy
+ redis:
+ condition: service_healthy
+ volumes:
+ - ./backend/src:/app/src
+ command: npm run dev
+
+ worker:
+ build:
+ context: ./backend
+ dockerfile: Dockerfile
+ container_name: brandlens-worker
+ environment:
+ NODE_ENV: development
+ SUPABASE_URL: http://host.docker.internal:54321
+ SUPABASE_ANON_KEY: your-anon-key
+ SUPABASE_SERVICE_ROLE_KEY: your-service-role-key
+ REDIS_URL: redis://redis:6379
+ JWT_SECRET: your-jwt-secret-key-here-make-it-long-and-random
+ depends_on:
+ postgres:
+ condition: service_healthy
+ redis:
+ condition: service_healthy
+ volumes:
+ - ./backend/src:/app/src
+ command: npm run worker
+
+ scheduler:
+ build:
+ context: ./backend
+ dockerfile: Dockerfile
+ container_name: brandlens-scheduler
+ environment:
+ NODE_ENV: development
+ SUPABASE_URL: http://host.docker.internal:54321
+ SUPABASE_ANON_KEY: your-anon-key
+ SUPABASE_SERVICE_ROLE_KEY: your-service-role-key
+ REDIS_URL: redis://redis:6379
+ JWT_SECRET: your-jwt-secret-key-here-make-it-long-and-random
+ depends_on:
+ postgres:
+ condition: service_healthy
+ redis:
+ condition: service_healthy
+ volumes:
+ - ./backend/src:/app/src
+ command: npm run scheduler
+
+volumes:
+ pgdata:
+ redisdata:
