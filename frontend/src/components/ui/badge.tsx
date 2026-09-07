@@ -1,41 +1,21 @@
+"use client";
 import * as React from "react";
-import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
-const badgeVariants = cva(
- "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
- {
- variants: {
- variant: {
- default:
- "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
- secondary:
- "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
- destructive:
- "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
- outline: "text-foreground",
- success:
- "border-transparent bg-success text-white hover:bg-success/80",
- warning:
- "border-transparent bg-warning text-white hover:bg-warning/80",
- info:
- "border-transparent bg-info text-white hover:bg-info/80",
- },
- },
- defaultVariants: {
- variant: "default",
- },
- }
-);
-
-interface BadgeProps
- extends React.HTMLAttributes<HTMLDivElement>,
- VariantProps<typeof badgeVariants> {}
-
-function Badge({ className, variant, ...props }: BadgeProps) {
- return (
- <div className={cn(badgeVariants({ variant }), className)} {...props} />
- );
+interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
+ variant?: "default" | "outline" | "success" | "warning" | "error" | "neutral";
 }
 
-export { Badge, badgeVariants };
+const Badge: React.FC<BadgeProps> = ({ className, variant = "default", ...props }) => (
+ <div className={cn("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors",
+ {
+ "border-transparent bg-indigo-600 text-white": variant === "default",
+ "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300": variant === "outline",
+ "border-transparent bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300": variant === "success",
+ "border-transparent bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300": variant === "warning",
+ "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300": variant === "error",
+ "border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300": variant === "neutral",
+ }, className)} {...props} />
+);
+
+export { Badge };

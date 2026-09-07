@@ -1,0 +1,31 @@
+# Fly.io App Configuration
+# Deploy: flyctl deploy --config fly.toml
+
+app = "brandlens-api"
+primary_region = "iad"
+
+[build]
+dockerfile = "Dockerfile.backend"
+
+[env]
+NODE_ENV = "production"
+PORT = "3001"
+
+[http_service]
+internal_port = 3001
+force_https = true
+auto_stop_machines = true
+auto_start_machines = true
+min_machines_running = 1
+
+ [[http_service.checks]]
+ interval = "15s"
+ timeout = "5s"
+ grace_period = "10s"
+ method = "GET"
+ path = "/health"
+
+[[vm]]
+memory = "256mb"
+cpu_kind = "shared"
+cpus = 1

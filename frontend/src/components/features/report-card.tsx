@@ -1,92 +1,50 @@
 "use client";
-
 import * as React from "react";
-import Link from "next/link";
-import { FileText, Download, MoreVertical, Calendar, Clock } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { ExternalLink } from "@/components/ui/external-link";
+import { Badge } from "@/components/ui/badge";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { MoreVertical, Download, Eye, Trash2, Copy } from "lucide-react";
+import { formatDate } from "@/lib/utils";
+import type { Report } from "@/lib/types";
 
-interface ReportCardProps {
- id: string;
- title: string;
- brand: string;
- type: "weekly" | "monthly" | "custom";
- status: "ready" | "generating" | "failed";
- date: string;
- pages: number;
-}
+interface ReportCardProps { report: Report; onView?: (id: string) => void; onDownload?: (id: string) => void; onDelete?: (id: string) => void; }
 
-const typeConfig = {
- weekly: { label: "Weekly", color: "bg-blue-50 text-blue-700 border-blue-200" },
- monthly: { label: "Monthly", color: "bg-purple-50 text-purple-700 border-purple-200" },
- custom: { label: "Custom", color: "bg-gray-50 text-gray-700 border-gray-200" },
-};
-
-const statusConfig = {
- ready: { label: "Ready", variant: "success" as const },
- generating: { label: "Generating...", variant: "warning" as const },
- failed: { label: "Failed", variant: "danger" as const },
-};
-
-export function ReportCard({ id, title, brand, type, status, date, pages }: ReportCardProps) {
- const typeInfo = typeConfig[type];
- const statusInfo = statusConfig[status];
+export function ReportCard({ report, onView, onDownload, onDelete }: ReportCardProps) {
+ const statusColors = { pending: "neutral", generating: "warning", completed: "success", failed: "error" } as const;
 
  return (
- <Card className="hover:shadow-md hover:border-brand-200 transition-all group">
- <CardHeader className="pb-3">
+ <Card className="p-5 hover:shadow-md transition-shadow">
  <div className="flex items-start justify-between">
- <div className="flex items-center gap-3">
- <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-500">
- <FileText className="h-5 w-5" />
- </div>
  <div>
- <h3 className="text-sm font-semibold text-gray-900 group-hover:text-brand-600 transition-colors">{title}</h3>
- <p className="text-xs text-gray-500">{brand}</p>
+ <h3 className="text-base font-semibold text-zinc-900 dark:text-white">{report.title}</h3>
+ <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{formatDate(new Date(report.createdAt))}</p>
+ <div className="mt-2 flex gap-1.5">
+ {Object.entries(report.sections).filter(([, v]) => v).map(([k]) => <Badge key={k} variant="outline" className="text-xs">{k}</Badge>)}
  </div>
  </div>
- <DropdownMenu
- trigger={
- <Button variant="ghost" size="icon-sm" className="h-8 w-8">
- <MoreVertical className="h-4 w-4" />
- </Button>
- }
- align="right"
- >
- <DropdownMenuItem icon={<Download className="h-3.5 w-3.5" />}>Download PDF</DropdownMenuItem>
- <DropdownMenuItem>
- <ExternalLink href="#">View Online</ExternalLink>
- </DropdownMenuItem>
- <DropdownMenuSeparator />
- <DropdownMenuItem destructive>Delete</DropdownMenuItem>
+ <Badge variant={statusColors[report.status]}>
+ {report.status}
+ </Badge>
+ </div>
+ <div className="mt-4 flex items-center justify-between border-t border-zinc-200 dark:border-zinc-800 pt-3">
+ <span className="text-xs text-zinc-500">{report.recipients.length} recipients</span>
+ <div className="flex gap-1">
+ {report.status === "completed" && (
+ <>
+ <Button variant="ghost" size="sm" onClick={() => onView?.(report.id)}><Eye className="h-4 w-4" /></Button>
+ <Button variant="ghost" size="sm" onClick={() => onDownload?.(report.id)}><Download className="h-4 w-4" /></Button>
+ </>
+ )}
+ <DropdownMenu>
+ <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
+ <DropdownMenuContent align="end">
+ <DropdownMenuItem onClick={() => navigator.clipboard.writeText(report.id)}><Copy className="h-4 w-4 mr-2" />Copy ID</DropdownMenuItem>
+ <DropdownMenuItem onClick={() => onDelete?.(report.id)} className="text-red-600"><Trash2 className="h-4 w-4 mr-2" />Delete</DropdownMenuItem>
+ </DropdownMenuContent>
  </DropdownMenu>
  </div>
- </CardHeader>
- <CardContent className="pt-0">
- <div className="flex items-center gap-2 mb-3">
- <Badge variant="secondary" className={cn("text-xs border-0", typeInfo.color)}>{typeInfo.label}</Badge>
- <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
  </div>
- <div className="flex items-center justify-between text-xs text-gray-500">
- <div className="flex items-center gap-1">
- <Calendar className="h-3.5 w-3.5" />
- {date}
- </div>
- <div className="flex items-center gap-1">
- <Clock className="h-3.5 w-3.5" />
- {pages} pages
- </div>
- </div>
- {status === "ready" && (
- <Link href={`/reports/${id}`}>
- <Button className="w-full mt-4" size="sm">View Report</Button>
- </Link>
- )}
- </CardContent>
  </Card>
  );
 }

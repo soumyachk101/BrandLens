@@ -8,20 +8,30 @@ export const config = {
  port: parseInt(process.env.PORT || '3000', 10),
  env: process.env.NODE_ENV || 'development',
  apiVersion: process.env.API_VERSION || 'v1',
+ corsOrigin: (process.env.CORS_ORIGIN || 'http://localhost:3001').split(',').map((s) => s.trim()),
  },
- supabase: {
- url: process.env.SUPABASE_URL || '',
- anonKey: process.env.SUPABASE_ANON_KEY || '',
- serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+ database: {
+ url: process.env.DATABASE_URL || '',
  },
  redis: {
  url: process.env.REDIS_URL || 'redis://localhost:6379',
+ },
+ jwt: {
+ secret: process.env.JWT_SECRET || '',
+ accessExpiry: process.env.JWT_EXPIRY || '15m',
+ refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || '7d',
  },
  openai: {
  apiKey: process.env.OPENAI_API_KEY || '',
  },
  anthropic: {
  apiKey: process.env.ANTHROPIC_API_KEY || '',
+ },
+ google: {
+ apiKey: process.env.GOOGLE_API_KEY || '',
+ },
+ perplexity: {
+ apiKey: process.env.PERPLEXITY_API_KEY || '',
  },
  stripe: {
  secretKey: process.env.STRIPE_SECRET_KEY || '',
@@ -38,29 +48,30 @@ export const config = {
  accessKey: process.env.S3_ACCESS_KEY || '',
  secretKey: process.env.S3_SECRET_KEY || '',
  },
+ r2: {
+ accountId: process.env.R2_ACCOUNT_ID || '',
+ accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+ secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+ bucket: process.env.R2_BUCKET || '',
+ },
  email: {
  apiKey: process.env.RESEND_API_KEY || '',
  from: process.env.EMAIL_FROM || 'noreply@brandlens.ai',
+ },
+ sentry: {
+ dsn: process.env.SENTRY_DSN || '',
+ environment: process.env.SENTRY_ENVIRONMENT || 'development',
  },
  rateLimit: {
  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
  maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
  },
- cors: {
- origin: (process.env.CORS_ORIGIN || 'http://localhost:3001').split(',').map(s => s.trim()),
- },
- jwt: {
- secret: process.env.JWT_SECRET || '',
- accessExpiry: process.env.JWT_EXPIRY || '15m',
- refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || '7d',
- },
+ logLevel: process.env.LOG_LEVEL || 'info',
 };
 
 export function validateConfig(): void {
- const required = [
- { key: 'SUPABASE_URL', value: config.supabase.url },
- { key: 'SUPABASE_ANON_KEY', value: config.supabase.anonKey },
- { key: 'SUPABASE_SERVICE_ROLE_KEY', value: config.supabase.serviceRoleKey },
+ const required: Array<{ key: string; value: string }> = [
+ { key: 'DATABASE_URL', value: config.database.url },
  { key: 'REDIS_URL', value: config.redis.url },
  { key: 'JWT_SECRET', value: config.jwt.secret },
  ];

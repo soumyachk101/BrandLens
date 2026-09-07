@@ -1,55 +1,76 @@
 "use client";
-
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { reportsApi } from "@/lib/api";
-import { mockReports } from "@/lib/mock-data";
-import { Report } from "@/types";
+import type { Report, ReportInput } from "@/lib/types";
 
-export function useReports(brandId: string, params?: Record<string, string>) {
+async function fetchReports(brandId?: string): Promise<Report[]> {
+ const url = brandId ? `/api/reports?brandId=${brandId}` : "/api/reports";
+ const res = await fetch(url);
+ if (!res.ok) throw new Error("Failed to fetch reports");
+ return res.json();
+}
+
+async function fetchReport(id: string): Promise<Report> {
+ const res = await fetch(`/api/reports/${id}`);
+ if (!res.ok) throw new Error("Failed to fetch report");
+ return res.json();
+}
+
+async function generateReport(data: ReportInput): Promise<Report> {
+ const res = await fetch("/api/reports/generate", {
+ method: "POST",
+ headers: { "Content-Type": "application/json" },
+ body: JSON.stringify(data),
+ });
+ if (!res.ok) throw new Error("Failed to generate report");
+ return res.json();
+}
+
+async function downloadReport(id: string): Promise<Blob> {
+ const res = await fetch(`/api/reports/${id}/download`);
+ if (!res.ok) throw new Error("Failed to download report");
+ return res.blob();
+}
+
+export function useReports(brandId?: string) {
  return useQuery({
- queryKey: ["reports", brandId, params],
- queryFn: async () => {
- const res = await reportsApi.list(brandId, params);
- return res.data;
- },
- placeholderData: { data: mockReports as Report[], meta: { page: 1, limit: 20, total: mockReports.length, totalPages: 1 } },
- enabled: !!brandId,
+ queryKey: ["reports", brandId],
+ queryFn: () => fetchReports(brandId),
  });
 }
 
 export function useReport(id: string) {
  return useQuery({
  queryKey: ["reports", id],
- queryFn: async () => {
- const res = await reportsApi.get(id);
- return res.data;
- },
+ queryFn: () => fetchReport(id),
  enabled: !!id,
+ refetchInterval: (query) => {
+ const data = query.state.data;
+ if (data && (data.status === "pending" || data.status === "generating")) {
+ return 2000;
+ }
+ return false;
+ },
  });
 }
 
-export function useGenerateReport(brandId: string) {
+export function useGenerateReport() {
  const qc = useQueryClient();
  return useMutation({
- mutationFn: (data: Record<string, unknown>) => reportsApi.create(brandId, data),
- onSuccess: () => {
- qc.invalidateQueries({ queryKey: ["reports", brandId] });
- },
+ mutationFn: generateReport,
+ onSuccess: () => qc.invalidateQueries({ queryKey: ["reports"] }),
  });
 }
 
 export function useDownloadReport() {
  return useMutation({
- mutationFn: async ({ reportId, format }: { reportId: string; format?: string }) => {
- const res = await reportsApi.download(reportId, format);
- return res.data;
+ mutationFn: async (id: string) => {
+ const blob = await downloadReport(id);
+ const url = URL.createObjectURL(blob);
+ const a = document.createElement("a");
+ a.href = url;
+ a.download = `report-${id}.pdf`;
+ a.click();
+ URL.revokeObjectURL(url);
  },
- });
-}
-
-export function useResendReport() {
- return useMutation({
- mutationFn: ({ reportId, data }: { reportId: string; data?: Record<string, string[]> }) =>
- reportsApi.resend(reportId, data),
  });
 }

@@ -1,50 +1,89 @@
-import { Request, Response, NextFunction } from 'express';
-import { AppError } from './response';
+import { FastifyInstance, FastifyRequest, FastifyReply, FastifyError } from 'fastify';
+import { ZodError } from 'zod';
+import * as Sentry from '@sentry/node';
+import { AppError } from '../utils/response';
+import { config } from '../config/env';
 
-export function notFoundHandler(req: Request, res: Response, next: NextFunction): void {
- if (!res.headersSent) {
- next(new AppError(`Route ${req.method} ${req.path} not found`, 404));
+export function registerErrorHandler(app: FastifyInstance): void {
+ app.setErrorHandler((error: FastifyError | Error, request: FastifyRequest, reply: FastifyReply) => {
+ const requestId = (request as unknown as { requestId?: string }).requestId || 'unknown';
+
+ // Log to console
+ request.log.error({
+ requestId,
+ err: error,
+ stack: error.stack,
+ message: error.message,
+ });
+
+ // Report to Sentry for non-client errors
+ if (!isClientError(error)) {
+ Sentry.captureException(error, {
+ extra: { requestId, url: request.url, method: request.method },
+ });
  }
-}
 
-export function errorHandler(
- err: Error,
- req: Request,
- res: Response,
- _next: NextFunction
-): void {
- const requestId = (req as unknown as { requestId?: string }).requestId || generateRequestId();
-
- console.error(`[${requestId}] ${err.stack || err.message}`);
-
- if (err instanceof AppError) {
- res.status(err.statusCode).json({
+ // Handle specific error types
+ if (error instanceof ZodError) {
+ return reply.status(422).send({
  success: false,
  error: {
- code: err.code,
- message: err.message,
- details: err.details,
+ code: 'VALIDATION_ERROR',
+ message: 'Validation failed',
+ details: error.errors.map((e) => ({
+ field: e.path.join('.'),
+ message: e.message,
+ })),
  request_id: requestId,
  },
  });
- return;
  }
 
- res.status(500).json({
+ if (error instanceof AppError) {
+ return reply.status(error.statusCode).send({
+ success: false,
+ error: {
+ code: error.code,
+ message: error.message,
+ details: error.details,
+ request_id: requestId,
+ },
+ });
+ }
+
+ // Fastify validation errors
+ if ('statusCode' in error && typeof error.statusCode === 'number' && error.statusCode < 500) {
+ return reply.status(error.statusCode).send({
+ success: false,
+ error: {
+ code: error.code || 'CLIENT_ERROR',
+ message: error.message,
+ request_id: requestId,
+ },
+ });
+ }
+
+ // Generic server error
+ return reply.status(500).send({
  success: false,
  error: {
  code: 'INTERNAL_ERROR',
- message: config.server.env === 'production'
+ message:
+ config.server.env === 'production'
  ? 'An unexpected error occurred.'
- : err.message,
- details: config.server.env === 'production' ? undefined : [{ field: 'server', message: err.stack || err.message }],
+ : error.message,
+ details: config.server.env === 'production' ? undefined : error.stack ? [error.stack] : undefined,
  request_id: requestId,
  },
  });
+ });
 }
 
-function generateRequestId(): string {
- return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+function isClientError(error: Error): boolean {
+ if (error instanceof AppError && error.statusCode < 500) return true;
+ if ('statusCode' in error && typeof (error as { statusCode?: number }).statusCode === 'number') {
+ const status = (error as { statusCode: number }).statusCode;
+ return status >= 400 && status < 500;
+ }
+ return false;
 }
-
-import { config } from '../../config/env';

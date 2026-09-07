@@ -1,56 +1,33 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-export function cn(...inputs: ClassValue[]) {
- return twMerge(clsx(inputs));
+export function formatNumber(value: number, decimals = 0): string {
+ return new Intl.NumberFormat("en-US", { maximumFractionDigits: decimals }).format(value);
 }
 
-export function formatNumber(num: number): string {
- if (num >= 1000000) {
- return (num / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
- }
- if (num >= 1000) {
- return (num / 1000).toFixed(1).replace(/\.0$/, "") + "K";
- }
- return num.toString();
+export function formatPercentage(value: number, decimals = 1): string {
+ return `${value.toFixed(decimals)}%`;
 }
 
-export function formatPercent(value: number): string {
- return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+export function formatRelativeDate(date: Date | string | number): string {
+ const d = typeof date === "string" || typeof date === "number" ? new Date(date) : date;
+ const now = new Date();
+ const diff = now.getTime() - d.getTime();
+ const seconds = Math.floor(diff / 1000);
+ const minutes = Math.floor(seconds / 60);
+ const hours = Math.floor(minutes / 60);
+ const days = Math.floor(hours / 24);
+
+ if (seconds < 60) return "just now";
+ if (minutes < 60) return `${minutes}m ago`;
+ if (hours < 24) return `${hours}h ago`;
+ if (days < 7) return `${days}d ago`;
+ return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function getSentimentColor(score: number): string {
- if (score >= 80) return "#059669";
- if (score >= 60) return "#10B981";
- if (score >= 40) return "#64748B";
- if (score >= 20) return "#F97316";
- return "#DC2626";
+export function formatCompact(value: number): string {
+ return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-export function getSentimentLabel(score: number): string {
- if (score >= 80) return "Very Positive";
- if (score >= 60) return "Positive";
- if (score >= 40) return "Neutral";
- if (score >= 20) return "Negative";
- return "Very Negative";
-}
-
-export function formatDate(date: Date | string): string {
- const d = new Date(date);
- return d.toLocaleDateString("en-US", {
- month: "short",
- day: "numeric",
- year: "numeric",
- });
-}
-
-export function formatDateTime(date: Date | string): string {
- const d = new Date(date);
- return d.toLocaleDateString("en-US", {
- month: "short",
- day: "numeric",
- year: "numeric",
- hour: "2-digit",
- minute: "2-digit",
- });
+export function getTrendDirection(trend: number): "up" | "down" | "neutral" {
+ if (trend > 0) return "up";
+ if (trend < 0) return "down";
+ return "neutral";
 }

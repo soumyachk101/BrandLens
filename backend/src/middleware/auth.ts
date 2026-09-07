@@ -1,52 +1,52 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { z } from 'zod';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseClient, getServiceRoleClient } from '../../utils/supabase';
+import { successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, createdResponse, handleZodError } from '../../utils/response';
+import { AppError, NotFoundError } from '../../utils/errors';
+import { AuthUser, ApiResponse } from '../../types';
 import { config } from '../../config/env';
-import { AuthUser } from '../../types';
 
-const supabase = createClient(config.supabase.url, config.supabase.anonKey);
+const supabase = getSupabaseClient();
 
-export async function authenticate(
- req: Request,
- res: Response,
- next: NextFunction
-): Promise<void> {
- try {
- const authHeader = req.headers.authorization;
+export async function authenticate(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+ const authHeader = request.headers.authorization;
 
- if (!authHeader || !authHeader.startsWith('Bearer ')) {
- throw createAuthError('Missing or invalid Authorization header', 'UNAUTHORIZED', 401);
+ if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+ throw new AppError('Missing or invalid Authorization header', 401, 'UNAUTHORIZED');
  }
 
  const token = authHeader.slice(7);
 
- const { data, error } = await supabase.auth.getUser(token);
+ try {
+ const { data, error } = await supabase!.auth.getUser(token);
 
  if (error || !data.user) {
- throw createAuthError('Invalid or expired token', 'UNAUTHORIZED', 401);
+ throw new AppError('Invalid or expired token', 401, 'UNAUTHORIZED');
  }
 
  const user = data.user;
 
- const { data: profile, error: profileError } = await supabase
+ const { data: profile, error: profileError } = await supabase!
  .from('agency_users')
  .select('agency_id, role, permissions')
  .eq('user_id', user.id)
  .maybeSingle();
 
  if (profileError || !profile) {
- throw createAuthError('User profile not found', 'FORBIDDEN', 403);
+ throw new AppError('User profile not found', 403, 'FORBIDDEN');
  }
 
  const agencyId = profile.agency_id;
 
- const { data: agency, error: agencyError } = await supabase
+ const { data: agency, error: agencyError } = await supabase!
  .from('agencies')
  .select('id, plan')
  .eq('id', agencyId)
  .maybeSingle();
 
  if (agencyError || !agency) {
- throw createAuthError('Agency not found', 'FORBIDDEN', 403);
+ throw new AppError('Agency not found', 403, 'FORBIDDEN');
  }
 
  const authenticatedUser: AuthUser = {
@@ -57,35 +57,29 @@ export async function authenticate(
  permissions: Array.isArray(profile.permissions) ? profile.permissions : [],
  };
 
- (req as unknown as { user: AuthUser }).user = authenticatedUser;
-
- next();
+ (request as unknown as { user: AuthUser }).user = authenticatedUser;
  } catch (err) {
- const error = err as Error & { statusCode?: number; code?: string };
- next(createAuthError(error.message, error.code || 'UNAUTHORIZED', error.statusCode || 401));
+ if (err instanceof AppError) throw err;
+ throw new AppError('Authentication failed', 401, 'UNAUTHORIZED');
  }
 }
 
-export async function authenticateApiKey(
- req: Request,
- res: Response,
- next: NextFunction
-): Promise<void> {
- try {
- const apiKey = req.headers['x-api-key'];
+export async function authenticateApiKey(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+ const apiKey = request.headers['x-api-key'];
 
  if (!apiKey || typeof apiKey !== 'string') {
- throw createAuthError('Missing x-api-key header', 'UNAUTHORIZED', 401);
+ throw new AppError('Missing x-api-key header', 401, 'UNAUTHORIZED');
  }
 
- const { data, error } = await supabase
+ try {
+ const { data, error } = await supabase!
  .from('agencies')
  .select('id, plan, name, api_key')
  .eq('api_key', apiKey)
  .maybeSingle();
 
  if (error || !data) {
- throw createAuthError('Invalid API key', 'UNAUTHORIZED', 401);
+ throw new AppError('Invalid API key', 401, 'UNAUTHORIZED');
  }
 
  const authenticatedUser: AuthUser = {
@@ -96,89 +90,37 @@ export async function authenticateApiKey(
  permissions: ['brands:read', 'brands:write', 'reports:read', 'reports:write'],
  };
 
- (req as unknown as { user: AuthUser }).user = authenticatedUser;
-
- next();
+ (request as unknown as { user: AuthUser }).user = authenticatedUser;
  } catch (err) {
- const error = err as Error & { statusCode?: number; code?: string };
- next(createAuthError(error.message, error.code || 'UNAUTHORIZED', error.statusCode || 401));
+ if (err instanceof AppError) throw err;
+ throw new AppError('Authentication failed', 401, 'UNAUTHORIZED');
  }
 }
 
 export function requireRole(allowedRoles: string[]) {
- return (req: Request, res: Response, next: NextFunction) => {
- const user = (req as unknown as { user?: AuthUser }).user;
+ return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
+ const user = (request as unknown as { user?: AuthUser }).user;
 
  if (!user) {
- res.status(401).json({
- success: false,
- error: {
- code: 'UNAUTHORIZED',
- message: 'Authentication required',
- request_id: getRequestId(req),
- },
- });
- return;
+ throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
  }
 
  if (!allowedRoles.includes(user.role)) {
- res.status(403).json({
- success: false,
- error: {
- code: 'FORBIDDEN',
- message: 'Insufficient permissions',
- request_id: getRequestId(req),
- },
- });
- return;
+ throw new AppError('Insufficient permissions', 403, 'FORBIDDEN');
  }
-
- next();
  };
 }
 
 export function requirePermission(permission: string) {
- return (req: Request, res: Response, next: NextFunction) => {
- const user = (req as unknown as { user?: AuthUser }).user;
+ return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
+ const user = (request as unknown as { user?: AuthUser }).user;
 
  if (!user) {
- res.status(401).json({
- success: false,
- error: {
- code: 'UNAUTHORIZED',
- message: 'Authentication required',
- request_id: getRequestId(req),
- },
- });
- return;
+ throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
  }
 
  if (!user.permissions.includes(permission) && user.role !== 'admin') {
- res.status(403).json({
- success: false,
- error: {
- code: 'FORBIDDEN',
- message: `Missing permission: ${permission}`,
- request_id: getRequestId(req),
- },
- });
- return;
+ throw new AppError(`Missing permission: ${permission}`, 403, 'FORBIDDEN');
  }
-
- next();
  };
-}
-
-function createAuthError(
- message: string,
- code: string,
- statusCode: number
-): AppError {
- const error = new AppError(message, statusCode);
- (error as Error & { code: string }).code = code;
- return error;
-}
-
-function getRequestId(req: Request): string {
- return (req as unknown as { requestId?: string }).requestId || `req_${Date.now().toString(36)}`;
 }

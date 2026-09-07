@@ -1,81 +1,93 @@
 "use client";
-
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { brandsApi } from "@/lib/api";
-import { mockBrands } from "@/lib/mock-data";
-import { Brand } from "@/types";
+import type { Brand, BrandInput } from "@/lib/types";
 
-export function useBrands(params?: Record<string, string>) {
+async function fetchBrands(): Promise<Brand[]> {
+ const res = await fetch("/api/brands");
+ if (!res.ok) throw new Error("Failed to fetch brands");
+ return res.json();
+}
+
+async function fetchBrand(id: string): Promise<Brand> {
+ const res = await fetch(`/api/brands/${id}`);
+ if (!res.ok) throw new Error("Failed to fetch brand");
+ return res.json();
+}
+
+async function createBrand(data: BrandInput): Promise<Brand> {
+ const res = await fetch("/api/brands", {
+ method: "POST",
+ headers: { "Content-Type": "application/json" },
+ body: JSON.stringify(data),
+ });
+ if (!res.ok) throw new Error("Failed to create brand");
+ return res.json();
+}
+
+async function updateBrand(id: string, data: Partial<BrandInput>): Promise<Brand> {
+ const res = await fetch(`/api/brands/${id}`, {
+ method: "PATCH",
+ headers: { "Content-Type": "application/json" },
+ body: JSON.stringify(data),
+ });
+ if (!res.ok) throw new Error("Failed to update brand");
+ return res.json();
+}
+
+async function deleteBrand(id: string): Promise<void> {
+ const res = await fetch(`/api/brands/${id}`, { method: "DELETE" });
+ if (!res.ok) throw new Error("Failed to delete brand");
+}
+
+async function scanBrand(id: string): Promise<{ message: string }> {
+ const res = await fetch(`/api/brands/${id}/scan`, { method: "POST" });
+ if (!res.ok) throw new Error("Failed to trigger scan");
+ return res.json();
+}
+
+export function useBrands() {
  return useQuery({
- queryKey: ["brands", params],
- queryFn: async () => {
- const res = await brandsApi.list(params);
- return res.data;
- },
- placeholderData: mockBrands as Brand[],
+ queryKey: ["brands"],
+ queryFn: fetchBrands,
  });
 }
 
 export function useBrand(id: string) {
  return useQuery({
  queryKey: ["brands", id],
- queryFn: async () => {
- const res = await brandsApi.get(id);
- return res.data;
- },
+ queryFn: () => fetchBrand(id),
  enabled: !!id,
  });
 }
 
-export function useCreateBrand() {
+export function useAddBrand() {
  const qc = useQueryClient();
  return useMutation({
- mutationFn: (data: Record<string, unknown>) => brandsApi.create(data),
- onSuccess: () => {
- qc.invalidateQueries({ queryKey: ["brands"] });
- },
+ mutationFn: createBrand,
+ onSuccess: () => qc.invalidateQueries({ queryKey: ["brands"] }),
  });
 }
 
-export function useUpdateBrand(id: string) {
+export function useUpdateBrand() {
  const qc = useQueryClient();
  return useMutation({
- mutationFn: (data: Record<string, unknown>) => brandsApi.update(id, data),
- onSuccess: () => {
- qc.invalidateQueries({ queryKey: ["brands"] });
- qc.invalidateQueries({ queryKey: ["brands", id] });
- },
+ mutationFn: ({ id, data }: { id: string; data: Partial<BrandInput> }) => updateBrand(id, data),
+ onSuccess: () => qc.invalidateQueries({ queryKey: ["brands"] }),
  });
 }
 
 export function useDeleteBrand() {
  const qc = useQueryClient();
  return useMutation({
- mutationFn: (id: string) => brandsApi.remove(id),
- onSuccess: () => {
- qc.invalidateQueries({ queryKey: ["brands"] });
- },
+ mutationFn: deleteBrand,
+ onSuccess: () => qc.invalidateQueries({ queryKey: ["brands"] }),
  });
 }
 
-export function useScanBrand(id: string) {
+export function useScanBrand() {
  const qc = useQueryClient();
  return useMutation({
- mutationFn: (data?: Record<string, unknown>) => brandsApi.scan(id, data),
- onSuccess: () => {
- qc.invalidateQueries({ queryKey: ["brands"] });
- qc.invalidateQueries({ queryKey: ["brands", id] });
- },
- });
-}
-
-export function useBrandAnalytics(id: string, params?: Record<string, string>) {
- return useQuery({
- queryKey: ["brands", id, "analytics", params],
- queryFn: async () => {
- const res = await brandsApi.getAnalytics(id, params);
- return res.data;
- },
- enabled: !!id,
+ mutationFn: scanBrand,
+ onSuccess: () => qc.invalidateQueries({ queryKey: ["brands"] }),
  });
 }

@@ -1,37 +1,34 @@
-import { SupabaseClient } from '@supabase/supabase-js';
-import { Subscription, SubscriptionStatus, PlanType } from '../../types';
-import { AppError, NotFoundError, ValidationError } from '../../utils/errors';
+import { PrismaClient, PlanType, SubscriptionStatus } from '@prisma/client';
 import Stripe from 'stripe';
-import { config } from '../../config/env';
+import { AppError, NotFoundError, ValidationError } from '../utils/errors';
+import { Subscription } from '../types';
+import { config } from '../config/env';
 
 const stripe = new Stripe(config.stripe.secretKey, {
  apiVersion: '2024-11-20.acacia',
 });
 
 export class SubscriptionService {
- constructor(private supabase: SupabaseClient) {}
+ constructor(private prisma: PrismaClient) {}
 
  async getByAgency(agencyId: string): Promise<Subscription | null> {
- const { data, error } = await this.supabase
- .from('subscriptions')
- .select('*')
- .eq('agency_id', agencyId)
- .order('created_at', { ascending: false })
- .limit(1)
- .maybeSingle();
+ const subscription = await this.prisma.subscriptions.findFirst({
+ where: { agency_id: agencyId },
+ orderBy: { created_at: 'desc' },
+ });
 
- if (error || !data) {
+ if (!subscription) {
  return null;
  }
 
- return this.mapRowToSubscription(data);
+ return this.mapRowToSubscription(subscription);
  }
 
  async createCheckoutSession(
  agencyId: string,
  plan: PlanType,
  successUrl: string,
- cancelUrl: string
+ cancelUrl: string,
  ): Promise<{ session_url: string }> {
  const priceId = config.stripe.prices[plan];
 
@@ -39,11 +36,10 @@ export class SubscriptionService {
  throw new ValidationError(`Invalid plan: ${plan}`);
  }
 
- const { data: agency } = await this.supabase
- .from('agencies')
- .select('email, name')
- .eq('id', agencyId)
- .maybeSingle();
+ const agency = await this.prisma.agencies.findFirst({
+ where: { id: agencyId },
+ select: { id: true, email: true, name: true },
+ });
 
  if (!agency) {
  throw new NotFoundError('Agency');
@@ -63,10 +59,10 @@ export class SubscriptionService {
  });
  customerId = customer.id;
 
- await this.supabase
- .from('agencies')
- .update({ api_key: null })
- .eq('id', agencyId);
+ await this.prisma.agencies.update({
+ where: { id: agencyId },
+ data: { api_key: null as any },
+ });
  }
 
  const session = await stripe.checkout.sessions.create({
@@ -79,17 +75,19 @@ export class SubscriptionService {
  metadata: { agency_id: agencyId, plan },
  });
 
- await this.supabase
- .from('subscriptions')
- .upsert({
+ await this.prisma.subscriptions.upsert({
+ where: { stripe_subscription_id: session.subscription as string },
+ update: {},
+ create: {
  agency_id: agencyId,
  stripe_customer_id: customerId,
  stripe_subscription_id: session.subscription as string,
  plan,
  status: 'trialing',
- current_period_start: new Date().toISOString(),
- current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+ current_period_start: new Date(),
+ current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
  metadata: { checkout_session_id: session.id },
+ },
  });
 
  return { session_url: session.url || '' };
@@ -99,7 +97,7 @@ export class SubscriptionService {
  const event = stripe.webhooks.constructEvent(payload, signature, config.stripe.webhookSecret);
 
  if (!event) {
- throw new AppError('Invalid webhook signature', 401);
+ throw new AppError('Invalid webhook signature', 401, 'UNAUTHORIZED');
  }
 
  const subscription = event.data.object as Stripe.Subscription;
@@ -123,9 +121,18 @@ export class SubscriptionService {
  const currentPeriodStart = new Date(subscription.current_period_start * 1000).toISOString();
  const currentPeriodEnd = new Date(subscription.current_period_end * 1000).toISOString();
 
- await this.supabase
- .from('subscriptions')
- .upsert({
+ await this.prisma.subscriptions.upsert({
+ where: { stripe_subscription_id: subscription.id },
+ update: {
+ status,
+ current_period_start: currentPeriodStart,
+ current_period_end: currentPeriodEnd,
+ cancel_at_period_end: subscription.cancel_at_period_end,
+ trial_ends_at: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
+ metadata: { stripe_status: subscription.status },
+ updated_at: new Date().toISOString(),
+ },
+ create: {
  agency_id: agencyId,
  stripe_customer_id: subscription.customer as string,
  stripe_subscription_id: subscription.id,
@@ -136,14 +143,14 @@ export class SubscriptionService {
  cancel_at_period_end: subscription.cancel_at_period_end,
  trial_ends_at: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
  metadata: { stripe_status: subscription.status },
- updated_at: new Date().toISOString(),
+ },
  });
 
  if (status === 'canceled' || status === 'unpaid') {
- await this.supabase
- .from('agencies')
- .update({ plan: 'starter' })
- .eq('id', agencyId);
+ await this.prisma.agencies.update({
+ where: { id: agencyId },
+ data: { plan: 'starter' as PlanType },
+ });
  }
  }
 
@@ -158,18 +165,12 @@ export class SubscriptionService {
  cancel_at_period_end: true,
  });
 
- const updated = await this.supabase
- .from('subscriptions')
- .update({ cancel_at_period_end: true })
- .eq('agency_id', agencyId)
- .select()
- .maybeSingle();
+ const updated = await this.prisma.subscriptions.update({
+ where: { stripe_subscription_id: subscription.stripe_subscription_id },
+ data: { cancel_at_period_end: true, updated_at: new Date() },
+ });
 
- if (!updated.data) {
- throw new AppError('Failed to cancel subscription', 500);
- }
-
- return this.mapRowToSubscription(updated.data);
+ return this.mapRowToSubscription(updated);
  }
 
  async getPlanLimits(agencyId: string): Promise<{
@@ -187,11 +188,10 @@ export class SubscriptionService {
  }> {
  const subscription = await this.getByAgency(agencyId);
 
- const { data: agency } = await this.supabase
- .from('agencies')
- .select('plan, api_key')
- .eq('id', agencyId)
- .maybeSingle();
+ const agency = await this.prisma.agencies.findFirst({
+ where: { id: agencyId },
+ select: { plan: true },
+ });
 
  const plan = subscription?.plan || agency?.plan || 'starter';
 
@@ -201,36 +201,43 @@ export class SubscriptionService {
  enterprise: { requests_per_minute: 1000, scans_per_day: 10000, concurrent_scans: 20, brands_max: -1 },
  };
 
- const { count: brandsCount } = await this.supabase
- .from('brands')
- .select('*', { count: 'exact', head: true })
- .eq('agency_id', agencyId);
+ const brandsCount = await this.prisma.brands.count({ where: { agency_id: agencyId } });
+
+ const now = new Date();
+ const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+ const scansThisMonth = await this.prisma.ai_queries.count({
+ where: {
+ brand_id: { in: (await this.prisma.brands.findMany({ where: { agency_id: agencyId }, select: { id: true } })).map((b) => b.id) },
+ created_at: { gte: monthStart },
+ },
+ });
 
  return {
  plan,
  limits: planLimits[plan],
  usage: {
- scans_this_month: 0,
- brands_count: brandsCount || 0,
+ scans_this_month: scansThisMonth,
+ brands_count: brandsCount,
  },
  };
  }
 
- private mapRowToSubscription(row: Record<string, unknown>): Subscription {
+ private mapRowToSubscription(row: any): Subscription {
  return {
- id: row.id as string,
- agency_id: row.agency_id as string,
- stripe_customer_id: (row.stripe_customer_id as string) || null,
- stripe_subscription_id: (row.stripe_subscription_id as string) || null,
- plan: row.plan as PlanType,
- status: row.status as SubscriptionStatus,
- current_period_start: row.current_period_start as string,
- current_period_end: row.current_period_end as string,
- cancel_at_period_end: (row.cancel_at_period_end as boolean) || false,
- trial_ends_at: (row.trial_ends_at as string) || null,
- metadata: (row.metadata as Record<string, unknown>) || {},
- created_at: row.created_at as string,
- updated_at: row.updated_at as string,
+ id: row.id,
+ agency_id: row.agency_id,
+ stripe_customer_id: row.stripe_customer_id,
+ stripe_subscription_id: row.stripe_subscription_id,
+ plan: row.plan,
+ status: row.status,
+ current_period_start: row.current_period_start,
+ current_period_end: row.current_period_end,
+ cancel_at_period_end: row.cancel_at_period_end,
+ trial_ends_at: row.trial_ends_at,
+ metadata: row.metadata,
+ created_at: row.created_at,
+ updated_at: row.updated_at,
  };
  }
 }

@@ -1,10 +1,13 @@
-import { v4 as uuidv4 } from 'uuid';
-import { SupabaseClient } from '@supabase/supabase-js';
-import { Brand, CreateBrandSchema, UpdateBrandSchema, BrandKeyword, BrandCompetitor, ScanFrequency } from '../../types';
-import { AppError, NotFoundError, ValidationError } from '../../utils/errors';
+import { PrismaClient, PlanType, ScanFrequency } from '@prisma/client';
+import { z } from 'zod';
+import { AppError, ValidationError, NotFoundError } from '../utils/errors';
+import { createBrandSchema, updateBrandSchema, brandFilterSchema } from '../utils/validators';
+import { Brand, BrandKeyword, BrandCompetitor, PaginatedResponse } from '../types';
+
+type BrandWithRelations = PrismaClient['brands'];
 
 export class BrandService {
- constructor(private supabase: SupabaseClient) {}
+ constructor(private prisma: PrismaClient) {}
 
  async list(
  agencyId: string,
@@ -16,103 +19,95 @@ export class BrandService {
  is_active?: boolean;
  sort?: string;
  order?: 'asc' | 'desc';
- } = {}
+ } = {},
  ): Promise<{ data: Brand[]; meta: { page: number; limit: number; total: number; total_pages: number } }> {
  const { page = 1, limit = 20, search, industry, is_active, sort = 'created_at', order = 'desc' } = options;
 
- const from = (page - 1) * limit;
- const to = from + limit - 1;
-
- let query = this.supabase
- .from('brands')
- .select('*', { count: 'exact' })
- .eq('agency_id', agencyId)
- .order(sort, { ascending: order === 'asc' })
- .range(from, to);
+ const where: any = { agency_id: agencyId };
 
  if (search) {
- query = query.ilike('name', `%${search}%`);
+ where.OR = [
+ { name: { contains: search, mode: 'insensitive' } },
+ { description: { contains: search, mode: 'insensitive' } },
+ ];
  }
 
  if (industry) {
- query = query.eq('industry', industry);
+ where.industry = industry;
  }
 
  if (typeof is_active === 'boolean') {
- query = query.eq('is_active', is_active);
+ where.is_active = is_active;
  }
 
- const { data, error, count } = await query;
+ const [data, total] = await Promise.all([
+ this.prisma.brands.findMany({
+ where,
+ skip: (page - 1) * limit,
+ take: limit,
+ orderBy: { [sort]: order },
+ }),
+ this.prisma.brands.count({ where }),
+ ]);
 
- if (error) {
- throw new AppError(`Failed to fetch brands: ${error.message}`, 500);
- }
+ const brands = data.map((b) => this.mapRowToBrand(b));
+ const totalPages = Math.ceil(total / limit);
 
- const brands = (data || []).map(this.mapRowToBrand);
- const total = count || 0;
-
- return {
- data: brands,
- meta: {
- page,
- limit,
- total,
- total_pages: Math.ceil(total / limit),
- },
- };
+ return { data: brands, meta: { page, limit, total, total_pages: totalPages } };
  }
 
  async get(agencyId: string, brandId: string): Promise<Brand> {
- const { data, error } = await this.supabase
- .from('brands')
- .select('*')
- .eq('id', brandId)
- .eq('agency_id', agencyId)
- .maybeSingle();
+ const brand = await this.prisma.brands.findFirst({
+ where: { id: brandId, agency_id: agencyId },
+ include: {
+ ai_queries: { take: 1 },
+ mentions: { take: 1 },
+ scan_jobs: { take: 1 },
+ },
+ });
 
- if (error || !data) {
+ if (!brand) {
  throw new NotFoundError('Brand');
  }
 
- return this.mapRowToBrand(data);
+ return this.mapRowToBrand(brand);
  }
 
  async create(agencyId: string, input: unknown): Promise<Brand> {
- const parsed = CreateBrandSchema.parse(input);
+ const parsed = createBrandSchema.parse(input);
 
- const { data, error } = await this.supabase
- .from('brands')
- .insert({
+ const brand = await this.prisma.brands.create({
+ data: {
  agency_id: agencyId,
  name: parsed.name,
- industry: parsed.industry || null,
- description: parsed.description || null,
- website_url: parsed.website_url || null,
- logo_url: parsed.logo_url || null,
+ industry: parsed.industry,
+ description: parsed.description,
+ website_url: parsed.website_url,
+ logo_url: parsed.logo_url,
  keywords: parsed.keywords || [],
  competitors: parsed.competitors || [],
  scan_frequency: parsed.scan_frequency || 'daily',
  is_active: true,
- })
- .select()
- .maybeSingle();
+ },
+ });
 
- if (error || !data) {
- if (error?.code === '23505') {
- throw new ValidationError('A brand with this name already exists', [
- { field: 'name', message: 'Brand name must be unique within the agency' },
- ]);
- }
- throw new AppError(`Failed to create brand: ${error?.message || 'Unknown error'}`, 500);
- }
-
- return this.mapRowToBrand(data);
+ return this.mapRowToBrand(brand);
  }
 
  async update(agencyId: string, brandId: string, input: unknown): Promise<Brand> {
- const parsed = UpdateBrandSchema.parse(input);
+ const parsed = updateBrandSchema.parse(input);
 
- const updateData: Record<string, unknown> = { ...parsed };
+ // Verify ownership
+ const existing = await this.prisma.brands.findFirst({
+ where: { id: brandId, agency_id: agencyId },
+ select: { id: true },
+ });
+
+ if (!existing) {
+ throw new NotFoundError('Brand');
+ }
+
+ const updateData: any = { ...parsed };
  if (updateData.website_url !== undefined) {
  updateData.website_url = parsed.website_url || null;
  }
@@ -126,84 +121,66 @@ export class BrandService {
  updateData.description = parsed.description || null;
  }
 
- const { data, error } = await this.supabase
- .from('brands')
- .update(updateData)
- .eq('id', brandId)
- .eq('agency_id', agencyId)
- .select()
- .maybeSingle();
+ const brand = await this.prisma.brands.update({
+ where: { id: brandId },
+ data: updateData,
+ });
 
- if (error || !data) {
- throw new NotFoundError('Brand');
- }
-
- return this.mapRowToBrand(data);
+ return this.mapRowToBrand(brand);
  }
 
  async delete(agencyId: string, brandId: string): Promise<void> {
- const { error } = await this.supabase
- .from('brands')
- .delete()
- .eq('id', brandId)
- .eq('agency_id', agencyId);
+ const existing = await this.prisma.brands.findFirst({
+ where: { id: brandId, agency_id: agencyId },
+ select: { id: true },
+ });
 
- if (error) {
- throw new AppError(`Failed to delete brand: ${error.message}`, 500);
- }
+ if (!existing) {
+ throw new NotFoundError('Brand');
  }
 
- async getAnalytics(
- agencyId: string,
- brandId: string,
- options: {
+ await this.prisma.brands.delete({ where: { id: brandId } });
+ }
+
+ async getAnalytics(agencyId: string, brandId: string, options: {
  from?: string;
  to?: string;
  granularity?: 'hour' | 'day' | 'week' | 'month';
  platforms?: string;
  entity_type?: string;
- } = {}
- ): Promise<Record<string, unknown>> {
+ } = {}): Promise<Record<string, unknown>> {
  await this.verifyBrandOwnership(agencyId, brandId);
 
- const { from, to, granularity = 'day', platforms, entity_type = 'all' } = options;
+ const { from = '2000-01-01', to = new Date().toISOString(), granularity = 'day', platforms, entity_type = 'all' } = options;
 
- const { data: queries, error } = await this.supabase
- .from('ai_queries')
- .select('id, platform, created_at, sentiment_score')
- .eq('brand_id', brandId)
- .gte('created_at', from || '2000-01-01')
- .lte('created_at', to || new Date().toISOString());
+ const [queries, mentions] = await Promise.all([
+ this.prisma.ai_queries.findMany({
+ where: {
+ brand_id: brandId,
+ created_at: { gte: from, lte: to },
+ },
+ select: { id: true, platform: true, created_at: true, sentiment_score: true },
+ }),
+ this.prisma.mentions.findMany({
+ where: {
+ brand_id: brandId,
+ created_at: { gte: from, lte: to },
+ },
+ select: { id: true, platform: true, entity_type: true, entity_name: true, sentiment: true, sentiment_score: true, created_at: true },
+ }),
+ ]);
 
- if (error) {
- throw new AppError(`Failed to fetch analytics: ${error.message}`, 500);
- }
+ let filteredQueries = queries;
+ let filteredMentions = mentions;
 
- let filteredQueries = queries || [];
  if (platforms) {
  const platformList = platforms.split(',');
  filteredQueries = filteredQueries.filter((q) => platformList.includes(q.platform));
- }
-
- const platformList = platforms ? platforms.split(',') : undefined;
- const entityTypeList = entity_type === 'all' ? undefined : entity_type.split(',');
-
- const { data: mentions, error: mentionsError } = await this.supabase
- .from('mentions')
- .select('id, platform, entity_type, entity_name, sentiment, sentiment_score, created_at')
- .eq('brand_id', brandId)
- .gte('created_at', from || '2000-01-01')
- .lte('created_at', to || new Date().toISOString());
-
- if (mentionsError) {
- throw new AppError(`Failed to fetch mentions for analytics: ${mentionsError.message}`, 500);
- }
-
- let filteredMentions = mentions || [];
- if (platformList) {
  filteredMentions = filteredMentions.filter((m) => platformList.includes(m.platform));
  }
- if (entityTypeList) {
+
+ if (entity_type !== 'all') {
+ const entityTypeList = entity_type.split(',');
  filteredMentions = filteredMentions.filter((m) => entityTypeList.includes(m.entity_type));
  }
 
@@ -212,26 +189,18 @@ export class BrandService {
  const brandMentions = filteredMentions.filter((m) => m.entity_type === 'brand').length;
  const visibilityScore = totalQueries > 0 ? Math.round((brandMentions / totalQueries) * 10000) / 10000 : 0;
 
- const sentimentScores = filteredMentions
- .filter((m) => m.sentiment_score !== null)
- .map((m) => m.sentiment_score as number);
- const avgSentiment = sentimentScores.length > 0
- ? Math.round((sentimentScores.reduce((a, b) => a + b, 0) / sentimentScores.length) * 1000) / 1000
- : 0;
+ const sentimentScores = filteredMentions.filter((m) => m.sentiment_score !== null).map((m) => m.sentiment_score as number);
+ const avgSentiment = sentimentScores.length > 0 ? Math.round((sentimentScores.reduce((a, b) => a + b, 0) / sentimentScores.length) * 1000) / 1000 : 0;
 
  const platformsSet = new Set(filteredQueries.map((q) => q.platform));
-
  const platformBreakdown: Record<string, unknown> = {};
+
  for (const platform of platformsSet) {
  const pQueries = filteredQueries.filter((q) => q.platform === platform);
  const pMentions = filteredMentions.filter((m) => m.platform === platform);
  const pBrandMentions = pMentions.filter((m) => m.entity_type === 'brand').length;
- const pSentimentScores = pMentions
- .filter((m) => m.sentiment_score !== null)
- .map((m) => m.sentiment_score as number);
- const pAvgSentiment = pSentimentScores.length > 0
- ? Math.round((pSentimentScores.reduce((a, b) => a + b, 0) / pSentimentScores.length) * 1000) / 1000
- : 0;
+ const pSentimentScores = pMentions.filter((m) => m.sentiment_score !== null).map((m) => m.sentiment_score as number);
+ const pAvgSentiment = pSentimentScores.length > 0 ? Math.round((pSentimentScores.reduce((a, b) => a + b, 0) / pSentimentScores.length) * 1000) / 1000 : 0;
  const pVisibility = pQueries.length > 0 ? Math.round((pBrandMentions / pQueries.length) * 10000) / 10000 : 0;
 
  platformBreakdown[platform] = {
@@ -266,36 +235,37 @@ export class BrandService {
  }
 
  async verifyBrandOwnership(agencyId: string, brandId: string): Promise<void> {
- const { data, error } = await this.supabase
- .from('brands')
- .select('id')
- .eq('id', brandId)
- .eq('agency_id', agencyId)
- .maybeSingle();
+ const brand = await this.prisma.brands.findFirst({
+ where: { id: brandId, agency_id: agencyId },
+ select: { id: true },
+ });
 
- if (error || !data) {
+ if (!brand) {
  throw new NotFoundError('Brand');
  }
  }
 
- private mapRowToBrand(row: Record<string, unknown>): Brand {
+ private mapRowToBrand(row: any): Brand {
+ const keywords: BrandKeyword[] = (row.keywords as any) || [];
+ const competitors: BrandCompetitor[] = (row.competitors as any) || [];
+
  return {
- id: row.id as string,
- agency_id: row.agency_id as string,
- name: row.name as string,
- industry: (row.industry as string) || null,
- description: (row.description as string) || null,
- website_url: (row.website_url as string) || null,
- logo_url: (row.logo_url as string) || null,
- keywords: (row.keywords as BrandKeyword[]) || [],
- competitors: (row.competitors as BrandCompetitor[]) || [],
+ id: row.id,
+ agency_id: row.agency_id,
+ name: row.name,
+ industry: row.industry,
+ description: row.description,
+ website_url: row.website_url,
+ logo_url: row.logo_url,
+ keywords,
+ competitors,
  scan_frequency: row.scan_frequency as ScanFrequency,
- is_active: row.is_active as boolean,
- last_scanned_at: (row.last_scanned_at as string) || null,
- visibility_score: row.visibility_score as number | undefined,
- total_mentions: row.total_mentions as number | undefined,
- created_at: row.created_at as string,
- updated_at: row.updated_at as string,
+ is_active: row.is_active,
+ last_scanned_at: row.last_scanned_at,
+ visibility_score: row.visibility_score,
+ total_mentions: row.total_mentions,
+ created_at: row.created_at,
+ updated_at: row.updated_at,
  };
  }
 }

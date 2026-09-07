@@ -1,69 +1,46 @@
 "use client";
-
 import { useQuery } from "@tanstack/react-query";
-import { statusApi } from "@/lib/api";
-import { mockPlatformStatus, mockVisibilityData, mockSentimentTrends } from "@/lib/mock-data";
-import { VisibilitySummary, PlatformStatus as PlatformStatusType } from "@/types";
+import { useAgencyStore } from "@/store";
 
-export function useDashboard() {
- const platformStatusQuery = useQuery({
- queryKey: ["dashboard", "platform-status"],
- queryFn: async () => {
- const res = await statusApi.getPlatforms();
- return res.data;
- },
- placeholderData: mockPlatformStatus,
- });
-
- const visibilityQuery = useQuery({
- queryKey: ["dashboard", "visibility"],
- queryFn: async () => {
- return mockVisibilityData;
- },
- placeholderData: mockVisibilityData,
- });
-
- const sentimentQuery = useQuery({
- queryKey: ["dashboard", "sentiment-trends"],
- queryFn: async () => {
- return mockSentimentTrends;
- },
- placeholderData: mockSentimentTrends,
- });
-
- const healthQuery = useQuery({
- queryKey: ["dashboard", "health"],
- queryFn: async () => {
- const res = await statusApi.getHealth();
- return res;
- },
- placeholderData: {
- status: "healthy",
- version: "1.2.0",
- timestamp: new Date().toISOString(),
- services: { database: "healthy", queue: "healthy", ai_platforms: { chatgpt: "healthy", perplexity: "healthy", claude: "healthy", gemini: "degraded", copilot: "healthy" } },
- },
- });
-
- return {
- platformStatus: platformStatusQuery.data ?? [],
- platformStatusLoading: platformStatusQuery.isLoading,
- visibility: visibilityQuery.data ?? [],
- visibilityLoading: visibilityQuery.isLoading,
- sentimentTrends: sentimentQuery.data ?? [],
- sentimentLoading: sentimentQuery.isLoading,
- health: healthQuery.data ?? null,
- healthLoading: healthQuery.isLoading,
- };
+async function fetchDashboardStats() {
+ const res = await fetch("/api/dashboard/stats");
+ if (!res.ok) throw new Error("Failed to fetch dashboard stats");
+ return res.json();
 }
 
-export function usePlatformStatus() {
+async function fetchRecentMentions(limit = 10) {
+ const res = await fetch(`/api/dashboard/mentions?limit=${limit}`);
+ if (!res.ok) throw new Error("Failed to fetch mentions");
+ return res.json();
+}
+
+async function fetchVisibilityTrends(brandId?: string) {
+ const url = brandId ? `/api/dashboard/trends?brandId=${brandId}` : "/api/dashboard/trends";
+ const res = await fetch(url);
+ if (!res.ok) throw new Error("Failed to fetch trends");
+ return res.json();
+}
+
+export function useDashboardStats() {
  return useQuery({
- queryKey: ["platform-status"],
- queryFn: async () => {
- const res = await statusApi.getPlatforms();
- return res.data;
- },
- placeholderData: mockPlatformStatus,
+ queryKey: ["dashboard", "stats"],
+ queryFn: fetchDashboardStats,
+ staleTime: 5 * 60 * 1000,
+ });
+}
+
+export function useRecentMentions(limit = 10) {
+ return useQuery({
+ queryKey: ["dashboard", "mentions", limit],
+ queryFn: () => fetchRecentMentions(limit),
+ staleTime: 2 * 60 * 1000,
+ });
+}
+
+export function useVisibilityTrends(brandId?: string) {
+ return useQuery({
+ queryKey: ["dashboard", "trends", brandId],
+ queryFn: () => fetchVisibilityTrends(brandId),
+ staleTime: 5 * 60 * 1000,
  });
 }

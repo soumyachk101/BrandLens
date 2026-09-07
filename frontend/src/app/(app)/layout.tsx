@@ -1,16 +1,5 @@
-import { Providers } from "@/app/providers";
-import { DashboardShell } from "@/components/features/dashboard-shell";
+import type { ReactNode } from "react";
 
-export default function AppLayout({
- children,
-}: {
- children: React.ReactNode;
-}) {
- return (
- <Providers>
- <DashboardShell>
- {children}
- </DashboardShell>
- </Providers>
- );
+export default function AppLayout({ children }: { children: ReactNode }) {
+ return <>{children}</>;
 }

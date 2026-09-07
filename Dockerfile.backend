@@ -1,0 +1,58 @@
+# ---- Stage 1: Builder ----
+FROM node:20-alpine AS builder
+
+# Install dependencies needed for native modules
+RUN apk add --no-cache python3 make g++ libc6-compat
+
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY package*.json ./
+
+# Install ALL dependencies (including devDependencies for build)
+RUN npm ci --include=dev && \
+ npm cache clean --force
+
+# Copy source code
+COPY tsconfig*.json ./
+COPY src/ ./src/
+COPY prisma/ ./prisma/
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Build TypeScript
+RUN npm run build
+
+# ---- Stage 2: Runner ----
+FROM node:20-alpine AS runner
+
+# Security: run as non-root
+RUN addgroup --system --gid 1001 nodejs && \
+ adduser --system --uid 1001 nodejs
+
+WORKDIR /app
+
+# Install only production dependencies
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy built artifacts from builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
+# Create directories for logs and temp files
+RUN mkdir -p logs /tmp && \
+ chown -R nodejs:nodejs /app
+
+USER nodejs
+
+EXPOSE 3001
+
+ENV NODE_ENV=production
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+ CMD node -e "const http=require('http');const req=http.request({hostname:'localhost',port:3001,path:'/health',method:'GET'},(res)=>{process.exit(res.statusCode===200?0:1)});req.on('error',()=>process.exit(1));req.end()"
+
+CMD ["node", "dist/index.js"]

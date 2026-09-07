@@ -1,11 +1,7 @@
-/**
- * Shared Types for BrandLens AI Services
- */
-
 export type Platform =
  | 'chatgpt'
- | 'claude'
  | 'perplexity'
+ | 'claude'
  | 'gemini'
  | 'copilot'
  | 'deepseek'
@@ -37,23 +33,17 @@ export interface ScanJob {
  mentions: BrandMention[];
  totalMentions: number;
  visibilityScore: number | null;
- sentimentBreakdown: SentimentBreakdown | null;
+ sentimentBreakdown: {
+ positive: number;
+ neutral: number;
+ negative: number;
+ dominant: 'positive' | 'neutral' | 'negative';
+ } | null;
  narrativeSummary: string | null;
  createdAt: string;
  startedAt?: string;
  completedAt?: string;
  error?: string;
-}
-
-export interface SentimentBreakdown {
- positive: number;
- neutral: number;
- negative: number;
- dominant: 'positive' | 'neutral' | 'negative';
-}
-
-export interface ScanResult {
- job: ScanJob;
 }
 
 export interface VisibilityScoreBreakdown {

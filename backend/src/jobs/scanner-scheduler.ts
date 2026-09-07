@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { getServiceRoleClient } from '../utils/supabase';
-import { enqueueScan } from '../queues';
-import { config } from '../config/env';
+import { getQueue } from '../queue/bull-queue';
+import { logger } from '../monitoring/logger';
 
 const supabase = getServiceRoleClient();
 
@@ -11,64 +11,80 @@ const scanSchedules: Record<string, string> = {
  weekly: '0 6 * * 1',
 };
 
-async function startScheduler() {
- console.log('[INFO] Starting BrandLens scan scheduler...');
+async function startScheduler(): Promise<void> {
+ logger.info('Starting BrandLens scan scheduler...');
 
  cron.schedule(scanSchedules.hourly, async () => {
- console.log('[SCHEDULER] Running hourly scan check');
+ logger.info('Running hourly scan check');
  await runDueScans('hourly');
  });
 
  cron.schedule(scanSchedules.daily, async () => {
- console.log('[SCHEDULER] Running daily scan check');
+ logger.info('Running daily scan check');
  await runDueScans('daily');
  });
 
  cron.schedule(scanSchedules.weekly, async () => {
- console.log('[SCHEDULER] Running weekly scan check');
+ logger.info('Running weekly scan check');
  await runDueScans('weekly');
  });
 
- console.log('[INFO] Scheduler started with cron jobs');
+ logger.info('Scheduler started with cron jobs');
 }
 
 async function runDueScans(frequency: string): Promise<void> {
  try {
- const { data: brands, error } = await supabase
+ const { data: brands, error } = await supabase!
  .from('brands')
  .select('id, agency_id, name, scan_frequency, last_scanned_at, competitors')
  .eq('is_active', true)
  .eq('scan_frequency', frequency);
 
  if (error) {
- console.error(`[ERROR] Failed to fetch brands for ${frequency} scan:`, error);
+ logger.error({ frequency, error }, `Failed to fetch brands for ${frequency} scan`);
  return;
  }
 
  if (!brands || brands.length === 0) {
- console.log(`[SCHEDULER] No brands due for ${frequency} scan`);
+ logger.debug({ frequency }, `No brands due for ${frequency} scan`);
  return;
  }
 
  const platforms = ['chatgpt', 'perplexity', 'claude', 'gemini'];
+ const scanQueue = getQueue('scan-queue');
 
  for (const brand of brands) {
- const platformsToScan = platforms;
-
- for (const platform of platformsToScan) {
+ for (const platform of platforms) {
  try {
- await enqueueScan(brand.id, brand.agency_id, platform);
- console.log(`[SCHEDULER] Enqueued scan for brand ${brand.name} (${brand.id}) on ${platform}`);
+ await scanQueue.add(
+ 'run-scan',
+ { brandId: brand.id, agencyId: brand.agency_id, platform },
+ { jobId: `scan:${brand.id}:${platform}:${Date.now()}` },
+ );
+ logger.info({ brandId: brand.id, brandName: brand.name, platform }, `Enqueued scan`);
  } catch (err) {
- console.error(`[ERROR] Failed to enqueue scan for brand ${brand.id} on ${platform}:`, err);
+ logger.error({ brandId: brand.id, platform, error: err }, `Failed to enqueue scan`);
  }
  }
  }
 
- console.log(`[SCHEDULER] Enqueued ${brands.length * platforms.length} scan jobs for ${frequency} scan`);
+ logger.info({ count: brands.length * platforms.length, frequency }, `Enqueued scan jobs`);
  } catch (err) {
- console.error(`[ERROR] Scheduler error for ${frequency} scan:`, err);
+ logger.error({ frequency, error: err }, `Scheduler error for ${frequency} scan`);
  }
 }
 
-startScheduler();
+process.on('SIGINT', () => {
+ logger.info('Shutting down scheduler...');
+ process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+ logger.info('Shutting down scheduler...');
+ process.exit(0);
+});
+
+startScheduler().catch((err) => {
+ logger.error({ error: err }, 'Failed to start scheduler');
+ process.exit(1);
+});

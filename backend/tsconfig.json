@@ -1,20 +1,25 @@
 {
  "compilerOptions": {
- "target": "es2020",
+ "target": "ES2022",
  "module": "commonjs",
- "lib": ["es2020"],
- "outDir": "./dist",
+ "moduleResolution": "bundler",
  "rootDir": "./src",
+ "outDir": "./dist",
  "strict": true,
  "esModuleInterop": true,
- "skipLibCheck": true,
  "forceConsistentCasingInFileNames": true,
  "resolveJsonModule": true,
  "declaration": true,
+ "declarationMap": true,
+ "sourceMap": true,
+ "skipLibCheck": true,
+ "incremental": true,
+ "types": ["node"],
+ "baseUrl": ".",
  "paths": {
- "shared/*": ["../shared/*"]
+ "@/*": ["./src/*"]
  }
  },
- "include": ["src/**/*"],
- "exclude": ["node_modules", "dist"]
+ "include": ["src/**/*.ts", "prisma/**/*.prisma"],
+ "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/*.spec.ts"]
 }
